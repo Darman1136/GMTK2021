@@ -18,15 +18,14 @@ const FName AGMTK2021Pawn::MoveRightBinding("MoveRight");
 const FName AGMTK2021Pawn::FireForwardBinding("FireForward");
 const FName AGMTK2021Pawn::FireRightBinding("FireRight");
 
-AGMTK2021Pawn::AGMTK2021Pawn()
-{	
+AGMTK2021Pawn::AGMTK2021Pawn() {
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> ShipMesh(TEXT("/Game/TwinStick/Meshes/TwinStickUFO.TwinStickUFO"));
 	// Create the mesh component
 	ShipMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShipMesh"));
 	RootComponent = ShipMeshComponent;
 	ShipMeshComponent->SetCollisionProfileName(UCollisionProfile::Pawn_ProfileName);
 	ShipMeshComponent->SetStaticMesh(ShipMesh.Object);
-	
+
 	// Cache our sound effect
 	static ConstructorHelpers::FObjectFinder<USoundBase> FireAudio(TEXT("/Game/TwinStick/Audio/TwinStickFire.TwinStickFire"));
 	FireSound = FireAudio.Object;
@@ -52,8 +51,7 @@ AGMTK2021Pawn::AGMTK2021Pawn()
 	bCanFire = true;
 }
 
-void AGMTK2021Pawn::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
-{
+void AGMTK2021Pawn::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) {
 	check(PlayerInputComponent);
 
 	// set up gameplay key bindings
@@ -63,8 +61,7 @@ void AGMTK2021Pawn::SetupPlayerInputComponent(class UInputComponent* PlayerInput
 	PlayerInputComponent->BindAxis(FireRightBinding);
 }
 
-void AGMTK2021Pawn::Tick(float DeltaSeconds)
-{
+void AGMTK2021Pawn::Tick(float DeltaSeconds) {
 	// Find movement direction
 	const float ForwardValue = GetInputAxisValue(MoveForwardBinding);
 	const float RightValue = GetInputAxisValue(MoveRightBinding);
@@ -76,64 +73,71 @@ void AGMTK2021Pawn::Tick(float DeltaSeconds)
 	const FVector Movement = MoveDirection * MoveSpeed * DeltaSeconds;
 
 	// If non-zero size, move this actor
-	if (Movement.SizeSquared() > 0.0f)
-	{
+	if (Movement.SizeSquared() > 0.0f) {
 		const FRotator NewRotation = Movement.Rotation();
 		FHitResult Hit(1.f);
 		RootComponent->MoveComponent(Movement, NewRotation, true, &Hit);
-		
-		if (Hit.IsValidBlockingHit())
-		{
+		MirrorPawn->GetRootComponent()->MoveComponent(Movement * -1, NewRotation * -1, true, &Hit);
+
+		if (Hit.IsValidBlockingHit()) {
 			const FVector Normal2D = Hit.Normal.GetSafeNormal2D();
 			const FVector Deflection = FVector::VectorPlaneProject(Movement, Normal2D) * (1.f - Hit.Time);
 			RootComponent->MoveComponent(Deflection, NewRotation, true);
+			MirrorPawn->GetRootComponent()->MoveComponent(Deflection * -1, NewRotation * -1, true);
 		}
 	}
-	
+
 	// Create fire direction vector
 	const float FireForwardValue = GetInputAxisValue(FireForwardBinding);
 	const float FireRightValue = GetInputAxisValue(FireRightBinding);
 	const FVector FireDirection = FVector(FireForwardValue, FireRightValue, 0.f);
 
 	// Try and fire a shot
-	FireShot(FireDirection);
+	bool success = FireShot(GetActorLocation(), FireDirection);
+
+
+	// Create fire direction vector
+	const FVector MirrorFireDirection = FVector(FireForwardValue * -1, FireRightValue * -1, 0.f);
+
+	// Try and fire a shot
+	FireShot(MirrorPawn->GetActorLocation(), MirrorFireDirection, true);
+
+	// if success = true we fired a shot and need to wait
+	if (success)
+		bCanFire = false;
 }
 
-void AGMTK2021Pawn::FireShot(FVector FireDirection)
-{
+bool AGMTK2021Pawn::FireShot(FVector ActorLocation, FVector FireDirection, bool mirror) {
 	// If it's ok to fire again
-	if (bCanFire == true)
-	{
+	if (bCanFire == true) {
 		// If we are pressing fire stick in a direction
-		if (FireDirection.SizeSquared() > 0.0f)
-		{
+		if (FireDirection.SizeSquared() > 0.0f) {
 			const FRotator FireRotation = FireDirection.Rotation();
 			// Spawn projectile at an offset from this pawn
-			const FVector SpawnLocation = GetActorLocation() + FireRotation.RotateVector(GunOffset);
+			const FVector SpawnLocation = ActorLocation + FireRotation.RotateVector(GunOffset);
 
 			UWorld* const World = GetWorld();
-			if (World != nullptr)
-			{
+			if (World != nullptr) {
 				// spawn the projectile
 				World->SpawnActor<AGMTK2021Projectile>(SpawnLocation, FireRotation);
 			}
 
-			bCanFire = false;
-			World->GetTimerManager().SetTimer(TimerHandle_ShotTimerExpired, this, &AGMTK2021Pawn::ShotTimerExpired, FireRate);
+			if (!mirror) {
+				World->GetTimerManager().SetTimer(TimerHandle_ShotTimerExpired, this, &AGMTK2021Pawn::ShotTimerExpired, FireRate);
 
-			// try and play the sound if specified
-			if (FireSound != nullptr)
-			{
-				UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
+				// try and play the sound if specified
+				if (FireSound != nullptr) {
+					UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
+				}
 			}
 
-			bCanFire = false;
+			return true;
 		}
 	}
+	return false;
 }
 
-void AGMTK2021Pawn::ShotTimerExpired()
-{
+void AGMTK2021Pawn::ShotTimerExpired() {
 	bCanFire = true;
 }
 
